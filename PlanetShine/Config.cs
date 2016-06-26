@@ -1,4 +1,4 @@
-﻿/*
+/*
 * (C) Copyright 2014, Valerian Gaudeau
 * 
 * Kerbal Space Program is Copyright (C) 2013 Squad. See http://kerbalspaceprogram.com/. This
@@ -21,7 +21,11 @@ namespace PlanetShine
     {
         private static readonly Config instance = new Config();
 
-        private Config(){}
+        private Config()
+        {
+            //ramCounter = new PerformanceCounter("Process", "Working Set - Private");
+            //ramCounter.InstanceName = "KSP.exe";
+        }
 
         public static Config Instance
         {
@@ -31,24 +35,45 @@ namespace PlanetShine
             }
         }
 
+        //private PerformanceCounter ramCounter = new PerformanceCounter("Process", "Working Set - Private");
+        public uint ramUsage
+        {
+            get
+            {
+                //var ramCounter = new PerformanceCounter("Process", "Working Set - Private");
+                //ramCounter.InstanceName = "KSP.exe";
+                //return Convert.ToInt32(ramCounter.NextValue()) / ((int)(1024) * (int)(1024));
+                //return Convert.ToInt32(GC.GetTotalMemory(true) / (1024 * 1024));
+                Profiler.enabled = true;
+                GC.GetTotalMemory(true);
+                return Profiler.GetMonoUsedSize();
+                //return 0;
+            }
+        }
+
+        public bool blizzyToolbarInstalled = false;
+        public bool kopernicusInstalled = false;
+        public bool eveInstalled = false;
+
         public static string[] qualityLabels = {"Low", "Medium", "High"};
         public static int maxAlbedoLightsQuantity = 4;
 
         public int quality { get; private set; }
         public bool useVertex = false;
         public int albedoLightsQuantity = 4;
-        public float baseAlbedoIntensity = 0.2f;
-        public float vacuumLightLevel = 0.02f;
+        public float baseAlbedoIntensity = 0.27f;
+        public float vacuumLightLevel = 0.03f;
         public float baseGroundAmbient = 0.50f;
-        public float groundAmbientOverrideRatio = 0.5f;
-        public float minAlbedoFadeAltitude = 0.02f;
-        public float maxAlbedoFadeAltitude = 0.10f;
-        public float minAmbientFadeAltitude = 0.00f;
-        public float maxAmbientFadeAltitude = 0.08f;
-        public float albedoRange = 8f;
+        public float groundAmbientOverrideRatio = 0.60f;
+        public float minAlbedoFadeAltitude = 0.00f;
+        public float maxAlbedoFadeAltitude = 0.65f;
+        public float minAmbientFadeAltitude = 0.10f;
+        public float maxAmbientFadeAltitude = 1.00f;
+        public float nearCurveStrength = 1.0f;
+        public float farCurveStrength = 20.0f;
+        public float curvesMixRatio = 0.5f;
         public bool debug = false;
         public int updateFrequency = 1;
-        public Dictionary<CelestialBody, CelestialBodyInfo> celestialBodyInfos = new Dictionary<CelestialBody, CelestialBodyInfo>();
 
         public bool stockToolbarEnabled = true;
 
@@ -82,15 +107,17 @@ namespace PlanetShine
     {
         private ConfigDefaults(){}
 
-        public static float baseAlbedoIntensity = 0.22f;
+        public static float baseAlbedoIntensity = 0.27f;
         public static float vacuumLightLevel = 0.03f;
         public static float baseGroundAmbient = 0.50f;
-        public static float groundAmbientOverrideRatio = 0.5f;
-        public static float minAlbedoFadeAltitude = 0.02f;
-        public static float maxAlbedoFadeAltitude = 0.10f;
-        public static float minAmbientFadeAltitude = 0.00f;
-        public static float maxAmbientFadeAltitude = 0.08f;
-        public static float albedoRange = 8f;
+        public static float groundAmbientOverrideRatio = 0.60f;
+        public static float minAlbedoFadeAltitude = 0.00f;
+        public static float maxAlbedoFadeAltitude = 0.65f;
+        public static float minAmbientFadeAltitude = 0.10f;
+        public static float maxAmbientFadeAltitude = 1.00f;
+        public static float nearCurveStrength = 1.0f;
+        public static float farCurveStrength = 20.0f;
+        public static float curvesMixRatio = 0.5f;
     }
 
     
@@ -102,13 +129,23 @@ namespace PlanetShine
         private ConfigNode configFile;
         private ConfigNode configFileNode;
 
-        public void Start()
+        public void Awake()
         {
             if (Instance != null)
                 Destroy (Instance.gameObject);
             Instance = this;
 
             LoadSettings ();
+
+            foreach (AssemblyLoader.LoadedAssembly assembly in AssemblyLoader.loadedAssemblies)
+            {
+                if (assembly.name == "Toolbar")
+                    config.blizzyToolbarInstalled = true;
+                if (assembly.name == "Kopernicus")
+                    config.kopernicusInstalled = true;
+                if (assembly.name == "EVEManager")
+                    config.eveInstalled = true;
+            }
         }
             
         public void LoadSettings()
@@ -129,7 +166,9 @@ namespace PlanetShine
             config.maxAlbedoFadeAltitude = float.Parse(configFileNode.GetValue("maxAlbedoFadeAltitude"));
             config.minAmbientFadeAltitude = float.Parse(configFileNode.GetValue("minAmbientFadeAltitude"));
             config.maxAmbientFadeAltitude = float.Parse(configFileNode.GetValue("maxAmbientFadeAltitude"));
-            config.albedoRange = float.Parse(configFileNode.GetValue("albedoRange"));
+            config.nearCurveStrength = float.Parse(configFileNode.GetValue("nearCurveStrength"));
+            config.farCurveStrength = float.Parse(configFileNode.GetValue("farCurveStrength"));
+            config.curvesMixRatio = float.Parse(configFileNode.GetValue("curvesMixRatio"));
             config.useVertex = bool.Parse(configFileNode.GetValue("useVertex"));
             config.updateFrequency = int.Parse(configFileNode.GetValue("updateFrequency"));
             config.setQuality(int.Parse(configFileNode.GetValue("quality")));
@@ -138,49 +177,6 @@ namespace PlanetShine
 
             if (FlightGlobals.Bodies == null)
                 return;
-
-            foreach (ConfigNode bodySettings in GameDatabase.Instance.GetConfigNodes("CelestialBodyColor")) // Kept for retro-compatibility, will be removed soon
-            {
-                LoadBody(bodySettings);
-            }
-
-            foreach (ConfigNode bodySettings in GameDatabase.Instance.GetConfigNodes("PlanetshineCelestialBody"))
-            {
-                LoadBody(bodySettings);
-            }
-        }
-
-        protected void LoadBody(ConfigNode bodySettings)
-        {
-            try
-            {
-                CelestialBody body = FlightGlobals.Bodies.Find(n => n.name == bodySettings.GetValue("name"));
-                if (FlightGlobals.Bodies.Contains(body))
-                {
-                    Color color = ConfigNode.ParseColor(bodySettings.GetValue("color"))
-                        * float.Parse(bodySettings.GetValue("intensity"));
-                    color.r = (color.r / 255f);
-                    color.g = (color.g / 255f);
-                    color.b = (color.b / 255f);
-                    color.a = 1;
-                    if (!config.celestialBodyInfos.ContainsKey(body))
-                        config.celestialBodyInfos.Add(body, new CelestialBodyInfo
-                                                      (
-                                                       color,
-                                                       float.Parse(bodySettings.GetValue("intensity")),
-                                                       float.Parse(bodySettings.GetValue("atmosphereAmbient")),
-                                                       float.Parse(bodySettings.GetValue("groundAmbientOverride"))
-                                                       ));
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogError(String.Format(
-                    "[PlanetShine] An exception occured reading CelestialBodyColor node:\n{0}\nThe exception was:\n{1}",
-                    bodySettings,
-                    e
-                ));
-            }
         }
 
         public void SaveSettings()
@@ -194,9 +190,11 @@ namespace PlanetShine
             configFileNode.SetValue("maxAlbedoFadeAltitude", config.maxAlbedoFadeAltitude.ToString());
             configFileNode.SetValue("minAmbientFadeAltitude", config.minAmbientFadeAltitude.ToString());
             configFileNode.SetValue("maxAmbientFadeAltitude", config.maxAmbientFadeAltitude.ToString());
-            configFileNode.SetValue("albedoRange", config.albedoRange.ToString());
+            configFileNode.SetValue("nearCurveStrength", config.nearCurveStrength.ToString());
+            configFileNode.SetValue("farCurveStrength", config.farCurveStrength.ToString());
+            configFileNode.SetValue("curvesMixRatio", config.curvesMixRatio.ToString());
             configFileNode.SetValue("useVertex", config.useVertex ? "True" : "False");
-            configFileNode.SetValue("updatefrequency", config.updateFrequency.ToString());
+            configFileNode.SetValue("updateFrequency", config.updateFrequency.ToString());
             configFileNode.SetValue("quality", config.quality.ToString());
             configFileNode.SetValue("stockToolbarEnabled", config.stockToolbarEnabled ? "True" : "False");
             configFile.Save(KSPUtil.ApplicationRootPath + "GameData/PlanetShine/Config/Settings.cfg");
